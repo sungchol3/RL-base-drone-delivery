@@ -96,7 +96,9 @@ while waypoint_index <= num_waypoints && step_count < max_simulation_steps
         current_pose_xyz = current_pose_xyz + move_vector;
     end
 
-    if waypoint_index <= num_waypoints 
+    if waypoint_index <= num_waypoints
+        % simple level flight (you can change if using PID or RL control
+        % system here)
         next_target_for_yaw = mission_waypoints(waypoint_index, :);
         delta_pos_for_yaw = next_target_for_yaw(1:2) - current_pose_xyz(1:2);
         if norm(delta_pos_for_yaw) > 1e-6 
