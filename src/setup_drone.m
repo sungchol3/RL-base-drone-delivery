@@ -1,7 +1,6 @@
 %% Define Function setup_drone
 function results = setup_drone(drone_spec, mission_waypoints, initial_pose_xyz_rpy, flight_params, enable_visualization)
 % setup_drone: 드론 시뮬레이션 환경을 설정하고, 주어진 경로를 비행하며 결과를 반환합니다.
-% ... (함수 설명 주석은 이전과 동일) ...
 
 disp('--- 드론 설정 및 기본 비행 시뮬레이션 시작 ---');
 
@@ -31,13 +30,40 @@ initial_orientation_quat = eul2quat(initial_orientation_eul_zyx, 'ZYX');
 
 disp('uavPlatform 생성 및 시나리오 연결 시도...');
 
+disp(initial_pose_xyz_rpy(1:3))
+
 % 1단계: UAV 객체만 사용하여 플랫폼 생성
 platform = uavPlatform("UAV",scenario, ...
-    InitialPosition=initial_pose_xyz_rpy(1:3),...
+    InitialPosition=[initial_pose_xyz_rpy(2),initial_pose_xyz_rpy(1),-initial_pose_xyz_rpy(3)],...
     InitialOrientation=initial_orientation_quat);
+
+disp('Calling setup(scenario)...');
+
+setup(scenario); % 시나리오 및 포함된 모든 플랫폼/센서 초기화
+disp('setup(scenario) complete.');
 
 disp('플랫폼 초기 위치 및 자세 설정 완료.');
 
+% update Platform Mesh
+disp('Defining constant arguments for updateMesh...');
+type_arg_um = 'quadrotor';
+drone_scale_factor_um = 1.5; % 드론 크기
+geometries_arg_um = {drone_scale_factor_um};
+color_arg_um = [0.2 0.3 0.8]; % 드론 색상
+
+% updateMesh의 position과 orientation은 플랫폼 기준 상대값이므로,
+% 드론 몸체 자체를 나타내는 메쉬는 항상 [0,0,0] 위치와 단위 쿼터니언 방향을 가집니다.
+relative_position_um = [0 0 0]; 
+relative_orientation_um_quat = [1 0 0 0]; % 단위 쿼터니언 [w, x, y, z]
+
+
+updateMesh(platform, ...
+           type_arg_um, ...
+           geometries_arg_um, ...
+           color_arg_um, ...
+           relative_position_um, ...
+           relative_orientation_um_quat);
+disp('Initial updateMesh call successful.');
 
 % 시뮬레이션 시간 스텝
 dt = 1 / flight_params.update_rate;
@@ -67,6 +93,7 @@ end
 
 % --- 3. 기본 경로 추종 비행 시뮬레이션 ---
 current_pose_xyz = initial_pose_xyz_rpy(1:3);
+previous_pos = current_pose_xyz;
 current_orientation_rpy = initial_pose_xyz_rpy(4:6); % [R, P, Y]
 
 num_waypoints = size(mission_waypoints, 1);
@@ -108,29 +135,47 @@ while waypoint_index <= num_waypoints && step_count < max_simulation_steps
         current_orientation_rpy(1:2) = 0; 
     end
 
-    % 1. 현재 자세(오일러 각)를 ZYX 순서로 준비: [Yaw, Pitch, Roll]
-    current_eul_zyx = [current_orientation_rpy(3), current_orientation_rpy(2), current_orientation_rpy(1)];
+    % 1. 현재 위치(position) : current_pose_xyz -> [Y, X, -Z]
+    update_pos = [current_pose_xyz(2), current_pose_xyz(1), -current_pose_xyz(3)];
+    % 2. 현재 속도(velcoity)
+    current_vel = (current_pose_xyz - previous_pos) ./ dt;
+
+    % 3. 현재 가속도(acceleration) : 중요하지 않으므로 [0,0,0]으로 설정
+    current_acc = [0, 0, 0];
+
+    % 4. Quaternion vector [qw qx qy qz]
+    %    current_orientation_rpy는 [Roll, Pitch, Yaw] 순서
+    current_eul_zyx = [current_orientation_rpy(3), current_orientation_rpy(2), current_orientation_rpy(1)]; % [Yaw, Pitch, Roll]
+    current_eul_quat = eul2quat(current_eul_zyx,"ZYX");
+
+    % 5. Angular velocity [wx wy wz]
+
+    if step_count == 1 || dt == 0
+        angvel_3elements = [0, 0, 0];
+    else
+        previous_eul_zyx = trajectory(5:7); % [R P Y]
+        previous_eul_quat = eul2quat(previous_eul_zyx, "ZYX");
+        q_dot = (current_eul_quat - previous_eul_quat) / dt;
+        omega_b_intermediate = quatmultiply(quatconj(previous_eul_quat), q_dot);
+        omega_b_pure_quaternion = 2 * omega_b_intermediate;
+        
+        angvel_3elements = omega_b_pure_quaternion(2:4);
+    end
     
-    % 2. 오일러 각을 회전 행렬로 변환
-    rotation_matrix = eul2rotm(current_eul_zyx, 'ZYX'); % ZYX 순서
-    
-    % 3. 4x4 동차 변환 행렬 생성
-    %   T = [ R(3x3)  P(3x1) ]
-    %       [ 0(1x3)    1    ]
-    transform_matrix_4x4 = eye(4); % 단위 행렬로 시작
-    transform_matrix_4x4(1:3, 1:3) = rotation_matrix;
-    transform_matrix_4x4(1:3, 4) = current_pose_xyz'; % 위치 벡터 (열벡터로)
-    
-    % 4. 4x4 행렬을 1x16 벡터로 변환 (열 우선 전치)
-    motion_input_16elements = transform_matrix_4x4(:)';
-    
+    %%% Move drone object
+    motion_input_16elements = [update_pos, current_vel, current_acc, current_eul_quat, angvel_3elements];
     move(platform, motion_input_16elements);
+
+    MotionInfo = read(platform);
+    % currentPosition = motionInfo;
+
 
     current_time = current_time + dt;
     trajectory(step_count, :) = [current_time, current_pose_xyz, current_orientation_rpy];
 
-    if enable_visualization && mod(step_count, 5) == 0 
-        show3D(scenario); 
+    if enable_visualization && mod(step_count, 20) == 0 
+        show3D(scenario);
+        xlabel(ax_3d, 'X (m)'); ylabel(ax_3d, 'Y (m)'); zlabel(ax_3d, 'Z (m)');
         title(ax_3d, sprintf('드론 비행 시뮬레이션 (시간: %.2fs)', current_time));
         drawnow limitrate; 
     end
