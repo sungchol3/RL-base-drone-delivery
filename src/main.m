@@ -24,6 +24,11 @@ enable_visualization = true;
 % etc
 gravity = 9.8;
 
+% 비디오 녹화 옵션
+video_options.enable = false; % true로 설정하면 녹화 시작
+video_options.filename = 'drone_flight_test.mp4';
+video_options.framerate = 10; % DroneSimulator 내부의 시각화 업데이트 빈도와 맞추는 것이 좋음
+
 %% --- 1.2. PID 파라미 정의 ---
 % --- PID 파라미터 설정 (예시 값, 반드시 튜닝 필요!) ---
 pid_params.altitude.Kp = 150;  % 고도 P 게인
@@ -199,6 +204,7 @@ for step_idx = 1:num_steps
              rad2deg(new_state.eul_angles(1)),rad2deg(new_state.eul_angles(2)),rad2deg(new_state.eul_angles(3)));
     end
 end
+drone_sim.closeVideo(); % !중요!
 disp('--- PID 제어 시뮬레이션 루프 완료 ---');
 
 %% --- 4. 결과 확인 ---

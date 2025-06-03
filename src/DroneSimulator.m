@@ -27,11 +27,17 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
         TrajectoryLog         % [Mx7] 시간, 위치(3), 오일러각(3) 저장 배열
         MaxLogSteps           % 로그 배열의 최대 크기
         CurrentLogIndex       % 현재 로그 인덱스
+
+        % 동영상 저장
+        EnableVideoRecording  % 동영상 녹화 사용 여부 (true/false)
+        VideoFileName         % 저장할 동영상 파일 이름 (예: 'drone_flight.mp4')
+        VideoFrameRate        % 비디오의 초당 프레임 수 (FPS)
+        VideoObject           % VideoWriter 객체 핸들
     end
     
     methods
         % --- 생성자 ---
-        function obj = DroneSimulator(drone_spec, mission_waypoints, initial_pose_xyz_rpy, flight_params, enable_visualization)
+        function obj = DroneSimulator(drone_spec, mission_waypoints, initial_pose_xyz_rpy, flight_params, enable_visualization, video_options)
             % 입력:
             %   drone_spec: .drone_mass, .payload_mass, .inertia (선택적, 없으면 기본값)
             %   mission_waypoints: 웨이포인트
@@ -98,6 +104,29 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
             if obj.EnableVisualization
                 obj.setupVisualization();
             end
+            % 애니메이션 동영상 저장
+            obj.EnableVideoRecording = false; % 기본값
+            if nargin > 5 && ~isempty(video_options) && isfield(video_options, 'enable') && video_options.enable
+                obj.EnableVideoRecording = true;
+                obj.VideoFileName = video_options.filename;
+                obj.VideoFrameRate = video_options.framerate;
+            else
+                % video_options가 제공되지 않거나 enable이 false인 경우를 위한 기본값
+                obj.VideoFileName = 'drone_simulation_video.mp4'; % 기본 파일 이름
+                obj.VideoFrameRate = 10; % 기본 프레임 속도 (아래 설명 참조)
+            end
+        
+            if obj.EnableVisualization && obj.EnableVideoRecording
+                try
+                    obj.VideoObject = VideoWriter(obj.VideoFileName, 'MPEG-4'); % 'MPEG-4' 또는 'Motion JPEG AVI' 등
+                    obj.VideoObject.FrameRate = obj.VideoFrameRate;
+                    open(obj.VideoObject);
+                    disp(['비디오 녹화를 시작합니다: ', obj.VideoFileName]);
+                catch ME
+                    warning('VideoWriter 객체 초기화에 실패했습니다: %s', ME.message);
+                    obj.EnableVideoRecording = false; % 실패 시 녹화 비활성화
+                end
+            end
             disp('--- DroneSimulator 객체 초기화 완료 ---');
         end
         
@@ -137,6 +166,24 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
             % 시각화 업데이트 (매 스텝 또는 주기적으로)
             if obj.EnableVisualization && mod(obj.CurrentLogIndex, 10) == 0 % 예: 10 스텝마다 업데이트
                  obj.updateVisualization();
+            end
+
+            % 프레임 캡처 및 비디오 쓰기 (시각화 업데이트 후)
+            if obj.EnableVisualization && obj.EnableVideoRecording && ~isempty(obj.VideoObject) && obj.VideoObject.IsOpen
+                % 시각화가 실제로 업데이트되는 스텝에서만 프레임 캡처
+                % 또는 모든 스텝에서 캡처 후 VideoWriter의 FrameRate에 맡길 수도 있지만,
+                % 시각화 업데이트 빈도와 맞추는 것이 효율적일 수 있음.
+                % 여기서는 is_visualization_update_step 조건을 재사용하거나, 
+                % VideoFrameRate에 맞춰 별도의 타이밍 로직 구현 가능
+                if is_visualization_update_step % 시각화가 업데이트된 스텝에서만 프레임 저장
+                    try
+                        frame = getframe(obj.FigureHandle); % Figure 핸들 사용
+                        writeVideo(obj.VideoObject, frame);
+                    catch ME
+                        warning('비디오 프레임 캡처 또는 쓰기에 실패했습니다: %s', ME.message);
+                        % 필요한 경우 여기서 녹화를 중단하도록 플래그 변경 가능
+                    end
+                end
             end
             
             currentState = obj.CurrentState; % 업데이트된 상태 반환
@@ -202,6 +249,28 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
             results.Position = obj.TrajectoryLog(1:obj.CurrentLogIndex-1, 2:4); % N, E, D
             results.EulerAngles = obj.TrajectoryLog(1:obj.CurrentLogIndex-1, 5:7); % R, P, Y
             results.TotalTime = obj.CurrentTime;
+        end
+        
+        % --- 동영상 촬영 종료(필수) ---
+        function closeVideo(obj)
+            if obj.EnableVideoRecording && ~isempty(obj.VideoObject) && isobject(obj.VideoObject) && obj.VideoObject.IsOpen
+                try
+                    close(obj.VideoObject);
+                    disp(['비디오가 성공적으로 저장되었습니다: ', obj.VideoFileName]);
+                catch ME
+                    warning('비디오 객체 닫기에 실패했습니다: %s', ME.message);
+                end
+                obj.VideoObject = []; % 객체 핸들 정리
+            end
+        end
+    
+        % 소멸자 (클래스 정의 마지막 부분에 추가)
+        function delete(obj)
+            obj.closeVideo(); % 객체 소멸 시 비디오 파일 닫기
+            if obj.EnableVisualization && isgraphics(obj.FigureHandle)
+                % close(obj.FigureHandle); % 선택적으로 시뮬레이션 창도 닫기
+            end
+            disp('DroneSimulator 객체가 소멸되었습니다.');
         end
 
     end
