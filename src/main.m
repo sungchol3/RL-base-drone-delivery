@@ -9,7 +9,6 @@ drone_spec.inertia = diag([0.5, 0.5, 1.0]); % 예시: Ix, Iy, Iz (kg*m^2)
 
 % 미션 웨이포인트 정의 [X, Y, Z_altitude] (시각화 좌표계 기준)
 mission_waypoints = [-10, 0, 10;
-                      0,  0, 10;
                       0,  0,  0];
                   
 % 초기 위치 및 자세 [X, Y, Z_altitude, Roll, Pitch, Yaw] (m, radians)
@@ -22,13 +21,58 @@ flight_params.update_rate = 100; % Hz, 시뮬레이션 및 제어 주기
 % 시각화 사용 여부
 enable_visualization = true;
 
+% etc
+gravity = 9.8;
+
+%% --- 1.2. PID 파라미 정의 ---
+% --- PID 파라미터 설정 (예시 값, 반드시 튜닝 필요!) ---
+pid_params.altitude.Kp = 150;  % 고도 P 게인
+pid_params.altitude.Ki = 30;   % 고도 I 게인
+pid_params.altitude.Kd = 80;   % 고도 D 게인 (수직 속도에 대한 댐핑)
+pid_params.altitude.I_limit = 50; % 적분항 제한
+
+pid_params.pos_N.Kp = 2.0;     % North 위치 P 게인 (출력: 목표 가속도 또는 각도 비율)
+pid_params.pos_N.Ki = 0.1;
+pid_params.pos_N.Kd = 3.0;     % North 속도에 대한 댐핑
+pid_params.pos_N.I_limit = 2;
+
+pid_params.pos_E.Kp = 2.0;     % East 위치 P 게인
+pid_params.pos_E.Ki = 0.1;
+pid_params.pos_E.Kd = 3.0;     % East 속도에 대한 댐핑
+pid_params.pos_E.I_limit = 2;
+
+pid_params.angle_limit = deg2rad(20); % 최대 목표 롤/피치 각도 (20도)
+
+pid_params.roll.Kp  = 8;      % 롤 각도 P 게인
+pid_params.roll.Ki  = 0.5;
+pid_params.roll.Kd  = 0.8;     % 롤 각속도(p)에 대한 댐핑
+pid_params.roll.I_limit = 1;
+
+pid_params.pitch.Kp = 8;     % 피치 각도 P 게인
+pid_params.pitch.Ki = 0.5;
+pid_params.pitch.Kd = 0.8;     % 피치 각속도(q)에 대한 댐핑
+pid_params.pitch.I_limit = 1;
+
+pid_params.yaw.Kp   = 5;       % 요 각도 P 게인
+pid_params.yaw.Ki   = 0.2;
+pid_params.yaw.Kd   = 0.5;      % 요 각속도(r)에 대한 댐핑
+pid_params.yaw.I_limit = 0.5;
+
+% 제어 입력 제한
+pid_params.thrust_limit_max = 2 * drone_spec.drone_mass * gravity; % 최대 추력 (예: 중력의 2배)
+pid_params.torque_limit_xy = 20;  % 롤/피치 토크 최대값 (Nm) - 튜닝 필요
+pid_params.torque_limit_z  = 5;   % 요 토크 최대값 (Nm) - 튜닝 필요
+
+% PID 상태 변수 초기화
+pid_state = []; % 첫 호출 시 함수 내에서 초기화됨
+
 %% --- 2. DroneSimulator 객체 생성 ---
 drone_sim = DroneSimulator(drone_spec, mission_waypoints, initial_pose_xyz_rpy, flight_params, enable_visualization);
 
 %% --- 3. 시뮬레이션 루프 ---
 total_simulation_time = 20; % 총 시뮬레이션 시간 (초)
 num_steps = ceil(total_simulation_time / drone_sim.TimeStep);
-
+%{
 disp('--- 메인 시뮬레이션 루프 시작 ---');
 for step_idx = 1:num_steps
     % 현재 시간
@@ -80,6 +124,82 @@ for step_idx = 1:num_steps
     end
 end
 disp('--- 메인 시뮬레이션 루프 완료 ---');
+%}
+
+%% --- PID control system ---
+% --- 웨이포인트 관리 ---
+% mission_waypoints는 [X,Y,Z_altitude] 형식, 시각화 좌표계 기준
+% target_waypoint_NED는 [N,E,D] 형식으로 변환 필요
+% X -> N, Y -> E, Z_altitude -> -D
+current_waypoint_idx = 1; % 첫 번째 웨이포인트부터 시작 (미션 정의상 두번째 점이 목표)
+if size(drone_sim.MissionWaypoints,1) < 2
+    error('미션 웨이포인트가 최소 2개 이상이어야 합니다.');
+end
+% 첫번째 목표 웨이포인트 (미션의 두번째 점)
+target_vis_coord = drone_sim.MissionWaypoints(current_waypoint_idx+1, :);
+target_waypoint_NED = [target_vis_coord(1); target_vis_coord(2); -target_vis_coord(3)]; % N, E, D
+
+% PID 상태 변수 초기화 (루프 전에 한 번만)
+pid_state = []; 
+
+disp('--- PID 제어 시뮬레이션 루프 시작 ---');
+for step_idx = 1:num_steps
+    current_t = drone_sim.CurrentTime;
+    
+    % 현재 드론 상태 가져오기
+    current_drone_state_for_pid = drone_sim.CurrentState;
+    
+    % PID 제어 입력 계산
+    [control_inputs, pid_state] = calculate_pid_control(current_drone_state_for_pid, ...
+                                                        target_waypoint_NED, ...
+                                                        drone_sim.DroneParams, ...
+                                                        pid_params, ...
+                                                        pid_state, ...
+                                                        drone_sim.TimeStep);
+    
+    % 드론 시뮬레이션 한 스텝 진행
+    [new_state, ~] = drone_sim.step(control_inputs);
+    
+    % 웨이포인트 도달 확인 및 다음 웨이포인트 설정
+    % (간단한 거리 기반 확인)
+    current_pos_NED = new_state.pos_inertial;
+    dist_to_target = norm(current_pos_NED - target_waypoint_NED);
+    arrival_threshold = 1.0; % 도달 임계값 (m) - 튜닝 필요
+
+    if dist_to_target < arrival_threshold
+        fprintf('시간: %.2f s - 웨이포인트 %d ([%.1f, %.1f, 고도 %.1f]) 도달!\n', ...
+            current_t, current_waypoint_idx + 1, target_vis_coord(1), target_vis_coord(2), -target_waypoint_NED(3));
+        current_waypoint_idx = current_waypoint_idx + 1;
+        
+        if current_waypoint_idx + 1 > size(drone_sim.MissionWaypoints, 1)
+            disp('모든 미션 웨이포인트 도달 완료.');
+            break; % 시뮬레이션 종료
+        else
+            % 다음 목표 웨이포인트 설정
+            target_vis_coord = drone_sim.MissionWaypoints(current_waypoint_idx+1, :);
+            target_waypoint_NED = [target_vis_coord(1); target_vis_coord(2); -target_vis_coord(3)];
+            % PID 상태의 일부(예: 위치 관련 적분항)를 리셋할 수도 있음 (선택적)
+            pid_state.pos_N.integral = 0; pid_state.pos_N.prev_error = 0;
+            pid_state.pos_E.integral = 0; pid_state.pos_E.prev_error = 0;
+        end
+    end
+    
+    % 종료 조건 (시간 초과)
+    if current_t >= total_simulation_time
+        disp('총 시뮬레이션 시간 도달.');
+        break;
+    end
+    
+    % 로그 출력 (필요시)
+    if mod(step_idx, round(1/drone_sim.TimeStep)) == 0 % 약 1초마다
+         fprintf('T: %.2fs, Alt: %.2fm (Tgt: %.1fm), N: %.1fm (Tgt: %.1fm), E: %.1fm (Tgt: %.1fm), R:%.2f,P:%.2f,Y:%.2f\n', ...
+             current_t, -new_state.pos_inertial(3), -target_waypoint_NED(3), ...
+             new_state.pos_inertial(1), target_waypoint_NED(1), ...
+             new_state.pos_inertial(2), target_waypoint_NED(2),...
+             rad2deg(new_state.eul_angles(1)),rad2deg(new_state.eul_angles(2)),rad2deg(new_state.eul_angles(3)));
+    end
+end
+disp('--- PID 제어 시뮬레이션 루프 완료 ---');
 
 %% --- 4. 결과 확인 ---
 simulation_results = drone_sim.getResults();

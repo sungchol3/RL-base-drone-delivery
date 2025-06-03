@@ -237,7 +237,7 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
         % --- 시각화 업데이트 ---
         function updateVisualization(obj)
             if obj.EnableVisualization && isgraphics(obj.AxesHandle)
-                % show3D(obj.Scenario); % 이것만으로도 플랫폼 위치가 업데이트 될 수 있음
+                show3D(obj.Scenario); % 이것만으로도 플랫폼 위치가 업데이트 될 수 있음
                 % 하지만, 좀 더 동적인 타이틀 업데이트 등을 위해 drawnow 사용
                 title(obj.AxesHandle, sprintf('드론 비행 시뮬레이션 (시간: %.2fs)', obj.CurrentTime));
                 drawnow limitrate; % limitrate는 과도한 업데이트 방지
