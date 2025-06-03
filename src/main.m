@@ -72,7 +72,7 @@ pid_params.torque_limit_z  = 5;   % 요 토크 최대값 (Nm) - 튜닝 필요
 pid_state = []; % 첫 호출 시 함수 내에서 초기화됨
 
 %% --- 2. DroneSimulator 객체 생성 ---
-drone_sim = DroneSimulator(drone_spec, mission_waypoints, initial_pose_xyz_rpy, flight_params, enable_visualization);
+drone_sim = DroneSimulator(drone_spec, mission_waypoints, initial_pose_xyz_rpy, flight_params, enable_visualization, video_options);
 
 %% --- 3. 시뮬레이션 루프 ---
 total_simulation_time = 20; % 총 시뮬레이션 시간 (초)

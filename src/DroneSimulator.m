@@ -106,7 +106,8 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
             end
             % 애니메이션 동영상 저장
             obj.EnableVideoRecording = false; % 기본값
-            if nargin > 5 && ~isempty(video_options) && isfield(video_options, 'enable') && video_options.enable
+            if all([~isempty(video_options), isfield(video_options, 'enable'), video_options.enable])
+                fprintf("Video 촬영이 허가되었습니다. filename : %s 에 비디오를 저장하겠습니다.\n",video_options.filename);
                 obj.EnableVideoRecording = true;
                 obj.VideoFileName = video_options.filename;
                 obj.VideoFrameRate = video_options.framerate;
@@ -164,6 +165,7 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
             end
             
             % 시각화 업데이트 (매 스텝 또는 주기적으로)
+            
             if obj.EnableVisualization && mod(obj.CurrentLogIndex, 10) == 0 % 예: 10 스텝마다 업데이트
                  obj.updateVisualization();
             end
@@ -175,7 +177,7 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
                 % 시각화 업데이트 빈도와 맞추는 것이 효율적일 수 있음.
                 % 여기서는 is_visualization_update_step 조건을 재사용하거나, 
                 % VideoFrameRate에 맞춰 별도의 타이밍 로직 구현 가능
-                if is_visualization_update_step % 시각화가 업데이트된 스텝에서만 프레임 저장
+                if mod(obj.CurrentLogIndex, 10) == 0 % 시각화가 업데이트된 스텝에서만 프레임 저장
                     try
                         frame = getframe(obj.FigureHandle); % Figure 핸들 사용
                         writeVideo(obj.VideoObject, frame);
