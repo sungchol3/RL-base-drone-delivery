@@ -20,10 +20,8 @@
 *.slxc binary
 *.slx binary merge=mlAutoMerge
 *.slxp binary
-
 ## MATLAB Project metadata files use LF line endings
 /resources/project/**/*.xml text eol=lf
-
 ## Other common binary file types
 *.docx binary
 *.exe binary
@@ -31,3 +29,4 @@
 *.pdf binary
 *.png binary
 *.xlsx binary
+saved_drone_sac_agents/final_trained_sac_agent.mat filter=lfs diff=lfs merge=lfs -text

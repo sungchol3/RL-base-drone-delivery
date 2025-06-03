@@ -233,17 +233,6 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
             end
             disp('DroneSimulator가 초기 상태로 리셋되었습니다.');
         end
-        
-        % --- 관측값 반환 (RL 에이전트용) ---
-        function obs = getObservation(obj)
-            % RL 에이전트가 사용할 관측값을 현재 상태로부터 구성하여 반환
-            % 예시: [pos_inertial; vel_inertial; eul_angles; ang_vel_body]
-            % 필요에 따라 정규화 또는 특정 요소만 선택 가능
-            obs = [obj.CurrentState.pos_inertial; 
-                   obj.CurrentState.vel_inertial; 
-                   obj.CurrentState.eul_angles; 
-                   obj.CurrentState.ang_vel_body];
-        end
 
         % --- 시뮬레이션 결과 반환 ---
         function results = getResults(obj)
@@ -273,6 +262,106 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
                 % close(obj.FigureHandle); % 선택적으로 시뮬레이션 창도 닫기
             end
             disp('DroneSimulator 객체가 소멸되었습니다.');
+        end
+
+        % --- 강화학습용 출력값 ---
+        function obs = getObservation(obj, current_target_waypoint_NED)
+            % getObservation: 강화학습 에이전트를 위한 관찰 벡터를 계산합니다.
+            %
+            % 입력:
+            %   obj: DroneSimulator 객체 인스턴스.
+            %   current_target_waypoint_NED: [3x1] 현재 목표 웨이포인트 [N_target; E_target; D_target] (m).
+            %                                   NED 좌표계 기준입니다.
+            %
+            % 출력:
+            %   obs: [12x1] 관찰 벡터 (열벡터).
+            %        [error_N; error_E; error_D; % 목표까지의 상대 위치 (m)
+            %         vel_N; vel_E; vel_D;       % 현재 선형 속도 (m/s) - 관성 좌표계
+            %         roll; pitch; yaw;          % 현재 오일러 각 (rad)
+            %         p; q; r]                   % 현재 동체 기준 각속도 (rad/s)
+
+            % 1. 현재 드론 상태 변수 추출
+            pos_N = obj.CurrentState.pos_inertial(1); % North 위치
+            pos_E = obj.CurrentState.pos_inertial(2); % East 위치
+            pos_D = obj.CurrentState.pos_inertial(3); % Down 위치 (양수 값이 아래 방향)
+            
+            vel_N = obj.CurrentState.vel_inertial(1); % North 속도
+            vel_E = obj.CurrentState.vel_inertial(2); % East 속도
+            vel_D = obj.CurrentState.vel_inertial(3); % Down 속도
+            
+            roll  = obj.CurrentState.eul_angles(1);   % 롤 각도
+            pitch = obj.CurrentState.eul_angles(2);   % 피치 각도
+            yaw   = obj.CurrentState.eul_angles(3);   % 요 각도
+            
+            p = obj.CurrentState.ang_vel_body(1);     % 동체 롤 레이트
+            q = obj.CurrentState.ang_vel_body(2);     % 동체 피치 레이트
+            r = obj.CurrentState.ang_vel_body(3);     % 동체 요 레이트
+
+            % 2. 목표 웨이포인트 추출
+            N_target = current_target_waypoint_NED(1);
+            E_target = current_target_waypoint_NED(2);
+            D_target = current_target_waypoint_NED(3);
+
+            % 3. 목표까지의 상대적 위치 (오차) 계산
+            error_N = N_target - pos_N;
+            error_E = E_target - pos_E;
+            error_D = D_target - pos_D; 
+            % 만약 고도(Altitude, 위로 갈수록 양수) 기준으로 오차를 사용하고 싶다면:
+            % current_altitude = -pos_D;
+            % target_altitude = -D_target;
+            % error_altitude = target_altitude - current_altitude;
+            % 이 경우 error_D 대신 error_altitude를 관찰 벡터에 포함할 수 있습니다.
+
+            % 4. 관찰 벡터 구성
+            % 순서: [error_N; error_E; error_D; vel_N; vel_E; vel_D; roll; pitch; yaw; p; q; r]
+            obs = [
+                error_N;
+                error_E;
+                error_D;
+                vel_N;
+                vel_E;
+                vel_D;
+                roll;
+                pitch;
+                yaw;   % 요(yaw) 각도는 [-pi, pi] 범위에서 불연속성이 있으므로, 
+                       % 신경망 학습 시 sin(yaw), cos(yaw) 두 값으로 변환하거나
+                       % (target_yaw - yaw) 오차를 정규화하여 사용하는 것을 고려할 수 있습니다.
+                       % 여기서는 일단 원시 yaw 값을 사용합니다.
+                p;
+                q;
+                r
+            ];
+
+            % --- 강화학습을 위한 추가 고려 사항 (주석) ---
+            %
+            % NORMALIZATION (정규화):
+            %   강화학습 에이전트의 학습 성능을 향상시키기 위해, 'obs' 벡터의 각 요소들을
+            %   일정한 범위 (예: [-1, 1] 또는 평균 0, 표준편차 1)로 정규화하는 것이 매우 중요합니다.
+            %   정규화는 이 함수 내에서 직접 수행하거나, 또는 MATLAB Reinforcement Learning Toolbox에서
+            %   환경을 생성할 때 `rlNumericSpec`의 `LowerLimit` 및 `UpperLimit`을 명시하여
+            %   툴박스가 내부적으로 처리하도록 할 수 있습니다.
+            %   각 관찰값의 예상되는 최소/최대 범위를 파악하여 정규화 계수를 결정해야 합니다.
+            %
+            %   예시 (정규화 로직을 이 함수에 직접 추가한다면):
+            %   obs(1) = error_N / MAX_EXPECTED_ERROR_N; % MAX_EXPECTED_ERROR_N은 예상 최대 오차
+            %   ... 나머지 요소들도 유사하게 ...
+            %   obs(7) = roll / MAX_ROLL_ANGLE; % MAX_ROLL_ANGLE은 최대 허용 롤 각도 (예: pi/4)
+            %   obs(9) = yaw / pi; % 요 각을 [-1, 1] 범위로 (만약 원시 yaw를 사용한다면)
+            %   % 또는 sin/cos 사용:
+            %   % obs_yaw_sin = sin(yaw);
+            %   % obs_yaw_cos = cos(yaw);
+            %   % 이 경우 관찰 벡터 구성 시 yaw 대신 이 두 값을 사용하고, 관찰 벡터 크기는 13이 됩니다.
+            %
+            % QUATERNIONS (쿼터니언):
+            %   오일러 각(roll, pitch, yaw) 대신 쿼터니언을 사용하여 자세를 표현하면
+            %   짐벌락(Gimbal Lock) 문제를 피하고 더 강건한 자세 표현이 가능합니다.
+            %   이 경우 `obj.CurrentState`에 쿼터니언 정보가 있어야 하고,
+            %   관찰 벡터에도 쿼터니언 값을 포함시켜야 합니다.
+            %
+            % OBSERVATION SPACE DEFINITION (관찰 공간 정의):
+            %   이 `getObservation` 메서드에서 반환하는 관찰 벡터의 구조(크기, 각 요소의 의미)는
+            %   MATLAB Reinforcement Learning Toolbox에서 사용자 정의 환경을 만들 때
+            %   `ObservationInfo = rlNumericSpec([...]);` 형태로 명확하게 정의되어야 합니다.
         end
 
     end
