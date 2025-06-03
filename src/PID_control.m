@@ -12,6 +12,8 @@ target = [10; 10; 0];
 z_hold = 5;
 d_gate = 0.1;
 closeTol = 0.05;
+vSinkMax = 4;
+aSinkMax = 6;
 
 alpha = 0.2;
 
@@ -76,6 +78,11 @@ for k = 2:N
     
     if state == 3
         aNet(1:2) = 0;
+        h = pos(3, k-1);
+        vLimit = vSinkMax * (h/z_hold);
+        vel(3,k-1) = max(vel(3,k-1), -vLimit);
+        aLimit = aSinkMax * (h/z_hold);
+        aNet(3) = max(aNet(3), -aLimit);
     end
 
     thrust = aNet + [0; 0; -g];
@@ -113,7 +120,14 @@ end
 if isnan(flightTime)
     flightTime = t(kLast);
 end
-fprintf('Time to reach target: %.2f s\n', flightTime);
+fprintf('Time to reach target: %.2f s\n\n', flightTime);
+
+m_drone = 31;
+idx_touch = find(pos(3,:) > 0, 1, 'last');
+v_touch = vel(:, idx_touch);
+p_touch = m_drone * v_touch;
+fprintf('Final Momentum just before landing \n');
+fprintf('Px = %7.2f   Py = %7.2f   Pz = %7.2f (kg*m/s)\n', p_touch(1), p_touch(2), p_touch(3));
 
 % Plot
 figure('Name', 'PID-Control Flight');
