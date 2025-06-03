@@ -12,6 +12,8 @@ target = [10; 10; 0];
 z_hold = 5;
 d_gate = 0.1;
 closeTol = 0.05;
+vSinkMax = 4;
+aSinkMax = 6;
 
 alpha = 0.2;
 
@@ -76,6 +78,11 @@ for k = 2:N
     
     if state == 3
         aNet(1:2) = 0;
+        h = pos(3, k-1);
+        vLimit = vSinkMax * (h/z_hold);
+        vel(3,k-1) = max(vel(3,k-1), -vLimit);
+        aLimit = aSinkMax * (h/z_hold);
+        aNet(3) = max(aNet(3), -aLimit);
     end
 
     thrust = aNet + [0; 0; -g];
