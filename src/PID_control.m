@@ -5,7 +5,7 @@ clc
 % Parameters
 g = 9.81;
 dt = 0.01;
-tEnd = 10;
+tEnd = 20;
 pos0 = [0; 0; 30];
 target = [10; 10; 0];
 
@@ -38,6 +38,7 @@ d_xy0 = norm(target(1:2)-pos0(1:2));
 z_cmd = pos0(3);
 state = 1; % 1:glide, 2:hold, 3:drop
 
+flightTime = NaN;
 % PID Loop
 for k = 2:N
     d_xy = norm(target(1:2)-pos(1:2,k-1));
@@ -101,7 +102,18 @@ for k = 2:N
     end
 
     errPrev = err;
+    lateralErr = norm(pos(1:2,k) - target(1:2));
+    if (pos(3,k) <= 0) && (lateralErr < d_gate)
+        kLast = k;
+        flightTime = t(k);
+        break
+    end
 end
+
+if isnan(flightTime)
+    flightTime = t(kLast);
+end
+fprintf('Time to reach target: %.2f s\n', flightTime);
 
 % Plot
 figure('Name', 'PID-Control Flight');
