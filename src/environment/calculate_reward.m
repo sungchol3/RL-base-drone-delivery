@@ -34,36 +34,38 @@ function reward = calculate_reward(current_drone_state, applied_action, current_
 % 출력:
 %   reward: (scalar) 이번 스텝에 대한 총 보상 값
 
-    % --- 1. 기본 스텝 보상 (시간 경과에 대한 벌점) ---
+    %% --- 1. 기본 스텝 보상 (시간 경과에 대한 벌점) ---
     current_reward = -reward_params.w_time_penalty;
 
-    % --- 2. 목표 지점과의 거리 기반 보상/벌점 ---
+    %% --- 2. 목표 지점과의 거리 기반 보상/벌점 ---
     pos_err_vec = current_target_NED - current_drone_state.pos_inertial;
     distance_to_target = norm(pos_err_vec);
 
     % 목표 지점과의 거리에 대한 벌점 (항상 목표를 향하도록 유도)
     current_reward = current_reward - reward_params.w_distance_penalty * distance_to_target;
     
-    % (선택적) 목표 지점에 가까워지는 '진행(progress)'에 대한 보상
-    % 이를 위해서는 이전 스텝의 distance_to_target 값이 필요함.
-    % if isfield(reward_params, 'previous_distance_to_target') && ~isempty(reward_params.previous_distance_to_target)
-    %     progress = reward_params.previous_distance_to_target - distance_to_target;
-    %     current_reward = current_reward + reward_params.w_progress * progress;
-    % end
+
+    %% --- 3. 진행 상황 보상(w_progress) ---
+    % 목표 지점에 가까워지는 '진행(progress)'에 대한 보상
+    if isfield(reward_params, 'w_progress') && reward_params.w_progress > 0 && ...
+       isfield(reward_params, 'previous_distance_to_target') && ~isempty(reward_params.previous_distance_to_target)
+        progress = reward_params.previous_distance_to_target - distance_to_target; % 거리가 줄어들면 양수
+        current_reward = current_reward + reward_params.w_progress * progress;
+    end
 
 
-    % --- 3. 안정성 및 제어 노력 관련 벌점 ---
-    % الف. 제어 입력(행동) 크기에 대한 벌점 (부드러운 제어 유도)
+    %% --- 4. 안정성 및 제어 노력 관련 벌점 ---
+    % a. 제어 입력(행동) 크기에 대한 벌점 (부드러운 제어 유도)
     thrust_effort_penalty = (applied_action.F_thrust - reward_params.hover_thrust)^2;
     torque_effort_penalty = sum(applied_action.M_body.^2); % 각 토크 요소 제곱의 합
     current_reward = current_reward - reward_params.w_action_thrust_effort * thrust_effort_penalty;
     current_reward = current_reward - reward_params.w_action_torque_effort * torque_effort_penalty;
 
-    % ب. 과도한 각속도에 대한 벌점 (안정적인 자세 유지 유도)
+    % b. 과도한 각속도에 대한 벌점 (안정적인 자세 유지 유도)
     angular_velocity_penalty = sum(current_drone_state.ang_vel_body.^2);
     current_reward = current_reward - reward_params.w_ang_vel_penalty * angular_velocity_penalty;
 
-    % ج. 과도한 기울임(롤/피치 각도)에 대한 벌점
+    % c. 과도한 기울임(롤/피치 각도)에 대한 벌점
     roll_angle  = current_drone_state.eul_angles(1);
     pitch_angle = current_drone_state.eul_angles(2);
     
@@ -80,7 +82,7 @@ function reward = calculate_reward(current_drone_state, applied_action, current_
     current_reward = current_reward - reward_params.w_attitude_penalty * attitude_penalty;
     
 
-    % --- 4. 에피소드 종료 시 보상/벌점 ---
+    %% --- 5. 에피소드 종료 시 보상/벌점 ---
     if is_episode_done
         if was_successful_termination % 목표 지점 도달 성공
             current_reward = current_reward + reward_params.bonus_reach_target;

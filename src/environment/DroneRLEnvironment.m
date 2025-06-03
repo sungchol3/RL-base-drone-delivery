@@ -3,10 +3,11 @@ classdef DroneRLEnvironment < rl.env.MATLABEnvironment
     % DroneSimulator를 사용하여 SAC 에이전트와 상호작용합니다.
 
     % 필수 속성 (RL Toolbox에서 사용)
+    
     properties
         % 행동 명세 (ActionInfo)와 관찰 명세 (ObservationInfo)를 여기에 지정합니다.
-        ObservationInfo rl.util.rlNumericSpec
-        ActionInfo      rl.util.rlNumericSpec
+        % ObservationInfo rl.util.rlNumericSpec
+        % ActionInfo      rl.util.rlNumericSpec
         
         % 환경 상태를 저장하는 속성 (선택적)
         State % 현재 관찰값 (obs)
@@ -42,6 +43,38 @@ classdef DroneRLEnvironment < rl.env.MATLABEnvironment
             %   rlEnvParams:          RL 환경 관련 파라미터 구조체
             %                         (.max_steps_per_episode)
 
+            % --- 관찰 공간 명세 (ObservationInfo) 정의 ---
+            numObs = 12;
+            pos_lm = ones(1,3) * norm(missionWaypointsNED) * 10; % Maximum distance : between waypoints * 10
+            vel_lm = ones(1,3)*1e2; % Maximum speed : 100 (10m/0.1s)
+            eular_ang_up = [pi/2, pi/2, 2*pi];
+            eular_ang_lw = -[-pi/2, -pi/2, 0];
+            ang_vel_lm = ones(1,3)*2*pi*5; % Maximum angular speed : 5 rev/s
+            % obsLimits = ones(numObs, 1) * Inf; 
+            % obsLimits = [...]; % 실제 예상 범위로 제한하는 것이 좋음
+            obsInfo = rlNumericSpec([numObs 1], ...
+                'LowerLimit', -[pos_lm, vel_lm, eular_ang_lw, ang_vel_lm]', ...
+                'UpperLimit', [pos_lm, vel_lm, eular_ang_up, ang_vel_lm]');
+            obsInfo.Name = 'Drone States and Errors';
+            obsInfo.Description = 'Error(N,E,D), Vel(N,E,D), Att(R,P,Y), AngVel(p,q,r)';
+
+            % --- 행동 공간 명세 (ActionInfo) 정의 ---
+            numAct = 4;
+            actInfo = rlNumericSpec([numAct 1], ...
+                'LowerLimit', -1, ...
+                'UpperLimit',  1);
+            actInfo.Name = 'Normalized Drone Controls';
+            actInfo.Description = 'Normalized Thrust, Mx, My, Mz';
+            
+            % === 상위 클래스 생성자 호출 ===
+            disp('DroneRLEnvironment 생성자: 상위 클래스 생성자 호출 시도...');
+            this = this@rl.env.MATLABEnvironment(obsInfo, actInfo); % 지역 변수 localObsInfo, localActInfo 사용
+            disp('DroneRLEnvironment 생성자: 상위 클래스 생성자 호출 성공!');
+            if isprop(this,'ObservationInfo') && isprop(this, 'ActionInfo')
+                fprintf("ObservationInfo와 ActionInfo가 정상적으로 정의되었음\n");
+            end
+            
+
             % DroneSimulator 객체 생성
             % droneSimulatorParams는 drone_spec, initial_pose_xyz_rpy, flight_params, enable_visualization 등을 포함해야 함
             this.DroneSim = DroneSimulator(droneSimulatorParams.drone_spec, ...
@@ -55,7 +88,7 @@ classdef DroneRLEnvironment < rl.env.MATLABEnvironment
             this.RewardParams = rewardParams;
             this.ActionScaling = actionScalingParams;
             this.MaxStepsPerEpisode = rlEnvParams.max_steps_per_episode;
-            
+            %{
             % --- 관찰 공간 명세 (ObservationInfo) ---
             % getObservation이 반환하는 12개 요소에 대한 명세
             % 각 요소의 예상 범위를 지정하는 것이 좋으나, 여기서는 일반적인 형태로 정의
@@ -84,9 +117,13 @@ classdef DroneRLEnvironment < rl.env.MATLABEnvironment
                 'UpperLimit',  1);
             this.ActionInfo.Name = 'Normalized Drone Controls';
             this.ActionInfo.Description = 'Normalized Thrust, Mx, My, Mz';
-            
+            %}
             % 초기 상태 업데이트 (reset 함수에서 수행)
             % updateActionInfo(this); % ActionInfo가 상태에 따라 변하는 경우
+            this.State = zeros(numObs, 1); 
+            disp('DroneRLEnvironment 생성자: 사용자 정의 속성 초기화 완료.');
+            
+            disp('<<<<< DroneRLEnvironment 생성자: 성공적으로 완료 및 종료됨 >>>>>');
         end
 
         % --- 에피소드 시작 시 환경 리셋 ---
@@ -123,7 +160,7 @@ classdef DroneRLEnvironment < rl.env.MATLABEnvironment
             % disp(this.CurrentTargetWaypointNED');
         end
 
-        % --- 한 스텝 진행 ---
+        %% --- 한 스텝 진행 ---
         function [observation, reward, isDone, loggedSignals] = step(this, action_normalized)
             loggedSignals = []; % 추가 정보 로깅용 (비워둠)
             this.CurrentStep = this.CurrentStep + 1;
@@ -220,7 +257,7 @@ classdef DroneRLEnvironment < rl.env.MATLABEnvironment
             if isfield(this.RewardParams, 'w_progress') && this.RewardParams.w_progress > 0 && ~isDone
                 this.PreviousDistanceToTarget = dist_to_target;
             end
-        end
+        end % step 끝
         
         % (선택적) 시각화 메서드 (RL Toolbox에서 직접 사용하진 않지만, 테스트용)
         % function render(this)
@@ -228,5 +265,17 @@ classdef DroneRLEnvironment < rl.env.MATLABEnvironment
         %         this.DroneSim.updateVisualization();
         %     end
         % end
+    end
+
+    methods (Access = public)
+        function obsInfo = getObservationInfo(this)
+            % ObservationInfo 속성값을 반환하는 공개 Getter 메서드
+            obsInfo = this.ObservationInfo; % 클래스 내부에서는 protected 속성 접근 가능
+        end
+        
+        function actInfo = getActionInfo(this)
+            % ActionInfo 속성값을 반환하는 공개 Getter 메서드
+            actInfo = this.ActionInfo; % 클래스 내부에서는 protected 속성 접근 가능
+        end
     end
 end

@@ -160,7 +160,7 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
             
             % 로깅
             if obj.CurrentLogIndex <= obj.MaxLogSteps
-                obj.TrajectoryLog(obj.CurrentLogIndex, :) = [obj.CurrentTime, pos_new', eul_new'];
+                obj.TrajectoryLog(obj.CurrentLogIndex, :) = [obj.CurrentTime, pos_new', vel_new', eul_new'];
                 obj.CurrentLogIndex = obj.CurrentLogIndex + 1;
             end
             
@@ -217,7 +217,7 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
                                       obj.CurrentState.eul_angles, ...
                                       obj.CurrentState.ang_vel_body);
 
-            obj.TrajectoryLog = zeros(obj.MaxLogSteps, 7); % [t, N, E, D, R, P, Y]
+            obj.TrajectoryLog = zeros(obj.MaxLogSteps, 10); % [t, N, E, D, vx, vy, vz, R, P, Y]
             obj.CurrentLogIndex = 1;
 
             disp(isgraphics(obj.AxesHandle))
@@ -238,7 +238,8 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
         function results = getResults(obj)
             results.Time = obj.TrajectoryLog(1:obj.CurrentLogIndex-1, 1);
             results.Position = obj.TrajectoryLog(1:obj.CurrentLogIndex-1, 2:4); % N, E, D
-            results.EulerAngles = obj.TrajectoryLog(1:obj.CurrentLogIndex-1, 5:7); % R, P, Y
+            results.Velocity = obj.TrajectoryLog(1:obj.CurrentLogIndex-1, 5:7); % vx, vy, vz
+            results.EulerAngles = obj.TrajectoryLog(1:obj.CurrentLogIndex-1, 8:10); % R, P, Y
             results.TotalTime = obj.CurrentTime;
         end
         
@@ -396,7 +397,7 @@ classdef DroneSimulator < handle % handle 클래스를 상속받으면 객체 �
         
         % --- 시각화 업데이트 ---
         function updateVisualization(obj)
-            if obj.EnableVisualization && isgraphics(obj.AxesHandle)
+            if all([obj.EnableVisualization, isgraphics(obj.AxesHandle)])
                 show3D(obj.Scenario); % 이것만으로도 플랫폼 위치가 업데이트 될 수 있음
                 % 하지만, 좀 더 동적인 타이틀 업데이트 등을 위해 drawnow 사용
                 title(obj.AxesHandle, sprintf('드론 비행 시뮬레이션 (시간: %.2fs)', obj.CurrentTime));

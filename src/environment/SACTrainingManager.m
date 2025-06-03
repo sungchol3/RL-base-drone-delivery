@@ -14,7 +14,7 @@ classdef SACTrainingManager < handle
         CriticNetwork1      % 첫 번째 크리틱 신경망 (dlnetwork)
         CriticNetwork2      % 두 번째 크리틱 신경망 (dlnetwork)
         
-        SACAgent            % rlSACAgent 객체
+        agent            % rlSACAgent 객체
         
         TrainingOptions     % rlTrainingOptions 객체
         TrainingStats       % train 함수로부터 반환된 학습 통계
@@ -44,13 +44,33 @@ classdef SACTrainingManager < handle
             obj.RLEnvironment = DroneRLEnvironment(droneSimParams, missionWaypointsNED, rewardParams, ...
                                                  rlHyperParams.actionScaling, rlEnvParams);
             
-            obsInfo = obj.RLEnvironment.ObservationInfo;
-            actInfo = obj.RLEnvironment.ActionInfo;
+            obsInfo = obj.RLEnvironment.getObservationInfo();
+            actInfo = obj.RLEnvironment.getActionInfo();
 
             % 2. 액터 및 크리틱 신경망 생성
-            obj.ActorNetwork = obj.createActorNetwork(obsInfo, actInfo, rlHyperParams.actorNetworkArch);
-            obj.CriticNetwork1 = obj.createCriticNetwork(obsInfo, actInfo, rlHyperParams.criticNetworkArch);
-            obj.CriticNetwork2 = obj.createCriticNetwork(obsInfo, actInfo, rlHyperParams.criticNetworkArch); % 두 번째 크리틱도 동일 구조
+            actorDlNetwork = obj.createActorNetwork(obsInfo, actInfo, rlHyperParams.actorNetworkArch);
+            criticDlNetwork1 = obj.createCriticNetwork(obsInfo, actInfo, rlHyperParams.criticNetworkArch);
+            criticDlNetwork2 = obj.createCriticNetwork(obsInfo, actInfo, rlHyperParams.criticNetworkArch);
+            
+            %%% action 정의
+            actor = rlContinuousGaussianActor(actorDlNetwork, obsInfo, actInfo, ...
+                'ActionMeanOutputNames', rlHyperParams.actorMeanOutputLayerName, ...
+                'ActionStandardDeviationOutputNames', rlHyperParams.actorStdOutputLayerName);
+             
+            %%% criticDlNetwork들을 사용하여 rlQValueFunction 객체 생성
+            critic1_rl_object = rlQValueFunction(criticDlNetwork1, obsInfo, actInfo, ...
+                'ObservationInputNames', {rlHyperParams.criticObsInputName}, ...
+                'ActionInputNames', {rlHyperParams.criticActionInputName});
+
+            critic2_rl_object = rlQValueFunction(criticDlNetwork2, obsInfo, actInfo, ...
+                'ObservationInputNames', rlHyperParams.criticObsInputName, ...
+                'ActionInputNames', rlHyperParams.criticActionInputName);
+            
+            obs = rand(obsInfo.Dimension); act = rand(actInfo.Dimension) % test
+            disp('QValue: '); disp(getValue(critic1_rl_object, {obs},{act}));
+            obj.ActorNetwork = actor;     % rlContinuousGaussianActor 할당
+            obj.CriticNetwork1 = critic1_rl_object; % rlQValueFunction 할당
+            obj.CriticNetwork2 = critic2_rl_object; % rlQValueFunction 할당
 
             % 3. SAC 에이전트 옵션 설정 및 에이전트 생성
             agentOpts = rlSACAgentOptions(...
@@ -58,28 +78,52 @@ classdef SACTrainingManager < handle
                 'DiscountFactor', rlHyperParams.discountFactor, ...
                 'ExperienceBufferLength', rlHyperParams.experienceBufferLength, ...
                 'MiniBatchSize', rlHyperParams.miniBatchSize, ...
-                'TargetSmoothFactor', rlHyperParams.targetSmoothFactor, ... % Tau
-                'NumWarmupSteps', rlHyperParams.numWarmupSteps, ... % 학습 시작 전 랜덤 행동 스텝 수
+                'TargetSmoothFactor', rlHyperParams.targetSmoothFactor, ...
                 'SaveExperienceBufferWithAgent', true); % 에이전트 저장 시 버퍼도 함께 저장
 
-            % 엔트로피 가중치 (alpha) 자동 튜닝 설정
+            % delete in options : 'NumWarmStartSteps', rlHyperParams.numWarmStartSteps, ...
+
+            % --- 엔트로피 가중치 (alpha) 자동 튜닝 설정 수정 ---
+            % 1. rlEntropyWeightOptions 객체 생성
+            entropyOpts = EntropyWeightOptions();
+            
+            % 2. EntropyWeightOptions 객체에 관련 속성 설정
             if strcmpi(rlHyperParams.targetEntropy, 'auto')
-                agentOpts.TargetEntropy = -prod(actInfo.Dimension); % 일반적인 휴리스틱: -dim(ActionSpace)
-                agentOpts.EntropyWeightOptions.LearningRate = rlHyperParams.alphaLearningRate;
+                % TargetEntropy를 자동으로 설정 (일반적으로 행동 공간 차원의 음수 값)
+                % actInfo.Dimension이 [numActions 1] 형태이므로 prod(actInfo.Dimension)은 numActions와 동일
+                entropyOpts.TargetEntropy = -prod(actInfo.Dimension); 
+                entropyOpts.LearnRate = rlHyperParams.alphaLearningRate; % 알파 학습률
+                entropyOpts.EntropyWeight = true; % 알파 자동 튜닝 활성화 (기본값일 수 있음)
             else
-                agentOpts.TargetEntropy = rlHyperParams.targetEntropy; % 숫자 값으로 지정
-                % 자동 튜닝을 사용하지 않으려면 EntropyWeightSource를 'AgentOption'으로 하고 EntropyWeight 설정
-                % agentOpts.EntropyWeightSource = 'AgentOption';
-                % agentOpts.EntropyWeight = 0.2; % 예시 고정 alpha 값
+                % TargetEntropy를 특정 숫자 값으로 지정하는 경우
+                entropyOpts.TargetEntropy = rlHyperParams.targetEntropy; 
+                entropyOpts.LearnRate = rlHyperParams.alphaLearningRate; % 알파 학습률
+                entropyOpts.EntropyWeight = true; % 알파 자동 튜닝 활성화
+                % 만약 알파 값을 고정하고 싶다면, agentOpts에서 직접 설정:
+                % agentOpts.EntropyWeight = fixed_alpha_value; 
+                % 그리고 entropyOpts.LearnEntropyWeight = false; 로 설정해야 합니다.
+                % 하지만 보통 SAC에서는 알파를 자동 튜닝하는 것이 일반적입니다.
             end
             
-            % 액터 및 크리틱 옵션 (학습률 등)
-            actorOptimizerOptions = rlOptimizerOptions('LearnRate', rlHyperParams.actorLR, 'GradientThreshold', 1);
-            criticOptimizerOptions = rlOptimizerOptions('LearnRate', rlHyperParams.criticLR, 'GradientThreshold', 1);
+            % (선택적) 초기 엔트로피 가중치 설정
+            if isfield(rlHyperParams, 'initialEntropyWeight')
+                entropyOpts.InitialEntropyWeight = rlHyperParams.initialEntropyWeight;
+            end
+
+            % 3. 설정된 entropyOpts 객체를 agentOpts에 할당
+            agentOpts.EntropyWeightOptions = entropyOpts;
             
-            obj.SACAgent = rlSACAgent(obj.ActorNetwork, {obj.CriticNetwork1, obj.CriticNetwork2}, agentOpts, ...
-                'ActorOptimizerOptions', actorOptimizerOptions, ...
-                'CriticOptimizerOptions', criticOptimizerOptions);
+            % 액터 및 크리틱 옵션 (학습률 등)
+            agentOpts.ActorOptimizerOptions = rlOptimizerOptions('LearnRate', rlHyperParams.actorLR, 'GradientThreshold', 1);
+            agentOpts.CriticOptimizerOptions = rlOptimizerOptions('LearnRate', rlHyperParams.criticLR, 'GradientThreshold', 1);
+            
+            % obj.SACAgent = rlSACAgent(obj.ActorNetwork, {obj.CriticNetwork1, obj.CriticNetwork2}, agentOpts, ...
+            %     'ActorOptimizerOptions', actorOptimizerOptions, ...
+            %     'CriticOptimizerOptions', criticOptimizerOptions);
+            disp('ActorNetwork:'); disp(class(obj.ActorNetwork));
+            disp('Critic1: '); disp(class(obj.CriticNetwork1))
+            disp('Critic2: '); disp(class(obj.CriticNetwork2))
+            obj.agent = rlSACAgent(obj.ActorNetwork, [obj.CriticNetwork1 obj.CriticNetwork2], agentOpts);
             
             % 4. 학습 옵션 설정
             obj.TrainingOptions = rlTrainingOptions(...
@@ -116,40 +160,35 @@ classdef SACTrainingManager < handle
             disp('액터 신경망 생성 중...');
             
             % 공통 경로
-            commonPath = [
+            commonPathLayers = [
                 featureInputLayer(obsInfo.Dimension(1), 'Normalization', 'none', 'Name', 'observation')
-                networkArch.commonLayers % 예: fullyConnectedLayer(256) reluLayer() fullyConnectedLayer(128) reluLayer()
+                networkArch.commonLayers % networkArch.commonLayers 자체가 이미 레이어 배열임
             ];
-            
             % 행동 평균을 위한 경로
-            meanPath = [
-                networkArch.meanLayers % 예: fullyConnectedLayer(actInfo.Dimension(1), 'Name', 'mean_output') tanhLayer('Name','tanh_mean')
-            ];
+            meanPathLayers = networkArch.meanLayers; % networkArch.meanLayers 자체가 이미 레이어 배열임
+            % 행동 표준편차를 위한 경로
+            stdPathLayers = networkArch.stdLayers;   % networkArch.stdLayers 자체가 이미 레이어 배열임
             
-            % 행동 표준편차를 위한 경로 (양수 값을 보장하기 위해 softplus 또는 sigmoid 후 스케일링 등 사용)
-            stdPath = [
-                networkArch.stdLayers % 예: fullyConnectedLayer(actInfo.Dimension(1), 'Name', 'std_output') softplusLayer('Name','softplus_std')
-            ];
-            
+            % --- 테스트 끝 ---
             % 신경망 그래프 구성
-            layerGraph = layerGraph(commonPath);
-            layerGraph = addLayers(layerGraph, meanPath);
-            layerGraph = addLayers(layerGraph, stdPath);
+            lGraph = layerGraph(commonPathLayers);
+            lGraph = addLayers(lGraph, meanPathLayers);
+            lGraph = addLayers(lGraph, stdPathLayers);
             
             % 경로 연결
             % commonPath의 마지막 레이어 이름을 알아야 함. 예시에서는 'common_relu_2'라고 가정
             % 또는 networkArch.commonLayers의 마지막 레이어 이름을 사용
-            lastCommonLayerName = commonPath(end).Name; % commonPath의 마지막 레이어 이름
-            if isa(commonPath(end), 'nnet.cnn.layer.ReluLayer') && length(commonPath) > 1 && isa(commonPath(end-1), 'nnet.cnn.layer.FullyConnectedLayer')
-                 lastCommonLayerName = commonPath(end-1).Name; % FC 레이어 이름으로 연결 시도
+            lastCommonLayerName = commonPathLayers(end).Name; % commonPath의 마지막 레이어 이름
+            if isa(commonPathLayers(end), 'nnet.cnn.layer.ReluLayer') && length(commonPath) > 1 && isa(commonPath(end-1), 'nnet.cnn.layer.FullyConnectedLayer')
+                 lastCommonLayerName = commonPathLayers(end-1).Name; % FC 레이어 이름으로 연결 시도
             end
 
 
-            layerGraph = connectLayers(layerGraph, lastCommonLayerName, meanPath(1).Name);
-            layerGraph = connectLayers(layerGraph, lastCommonLayerName, stdPath(1).Name);
+            lGraph = connectLayers(lGraph, lastCommonLayerName, meanPathLayers(1).Name);
+            lGraph = connectLayers(lGraph, lastCommonLayerName, stdPathLayers(1).Name);
             
-            actorNetwork = dlnetwork(layerGraph);
-            % actorNetwork = initialize(actorNetwork); % 선택적: 가중치 초기화
+            actorNetwork = dlnetwork(lGraph);
+            actorNetwork = initialize(actorNetwork); % 선택적: 가중치 초기화
             
             % MATLAB의 rlContinuousGaussianActor는 평균과 로그 표준편차를 출력하는 네트워크를 기대함.
             % 따라서 stdPath의 마지막 활성화 함수는 로그 표준편차를 직접 출력하거나, 
@@ -198,46 +237,50 @@ classdef SACTrainingManager < handle
                 networkArch.commonPath % 예: fullyConnectedLayer(256) reluLayer() fullyConnectedLayer(1)
             ];
             
-            layerGraph = layerGraph();
-            layerGraph = addLayers(layerGraph, statePath);
-            layerGraph = addLayers(layerGraph, actionPath);
-            layerGraph = addLayers(layerGraph, commonPath);
+            l = layerGraph();
+            l = addLayers(l, statePath);
+            l = addLayers(l, actionPath);
+            l = addLayers(l, commonPath);
             
-            layerGraph = connectLayers(layerGraph, lastStateLayerName, 'concat/in1');
-            layerGraph = connectLayers(layerGraph, lastActionLayerName, 'concat/in2');
+            l = connectLayers(l, lastStateLayerName, 'concat/in1');
+            l = connectLayers(l, lastActionLayerName, 'concat/in2');
             
-            criticNetwork = dlnetwork(layerGraph);
+            criticNetwork = dlnetwork(l);
             % criticNetwork = initialize(criticNetwork); % 선택적
 
             disp('크리틱 신경망 생성 완료.');
         end
         
-        % --- 에이전트 학습 실행 ---
+        %% --- 에이전트 학습 실행 ---
         function [trainedAgent, trainingStats] = trainAgent(obj)
             disp('--- SAC 에이전트 학습 시작 ---');
             
             % 학습 실행
-            [obj.SACAgent, obj.TrainingStats] = train(obj.SACAgent, obj.RLEnvironment, obj.TrainingOptions);
+            disp(class(obj.agent))
+            obj.TrainingStats = train(obj.agent, obj.RLEnvironment, obj.TrainingOptions);
+
+            % obj.agent = train_agent;
+            % obj.TrainingStats = trainingState;
             
-            trainedAgent = obj.SACAgent;
+            trainedAgent = obj.agent;
             trainingStats = obj.TrainingStats;
             
             % 학습된 에이전트 저장 (선택적, TrainingOptions에서 이미 저장될 수 있음)
-            % agentToSave = obj.SACAgent; % 현재 학습된 에이전트
-            % save(fullfile(obj.TrainedAgentPath, 'final_trained_sac_agent.mat'), 'agentToSave');
-            % disp(['최종 학습된 에이전트가 저장되었습니다: ', fullfile(obj.TrainedAgentPath, 'final_trained_sac_agent.mat')]);
+            agentToSave = obj.agent; % 현재 학습된 에이전트
+            save(fullfile(obj.TrainedAgentPath, 'final_trained_sac_agent.mat'), 'agentToSave');
+            disp(['최종 학습된 에이전트가 저장되었습니다: ', fullfile(obj.TrainedAgentPath, 'final_trained_sac_agent.mat')]);
             
             disp('--- SAC 에이전트 학습 완료 ---');
         end
         
         % --- 학습된 에이전트 반환 ---
         function agent = getTrainedAgent(obj)
-            if isempty(obj.SACAgent) || ~isfield(obj.TrainingStats, 'EpisodeReward') % 학습이 실행되었는지 간단히 확인
+            if isempty(obj.agent) || ~isfield(obj.TrainingStats, 'EpisodeReward') % 학습이 실행되었는지 간단히 확인
                 warning('에이전트가 아직 학습되지 않았거나 학습 정보가 없습니다.');
                 agent = [];
                 return;
             end
-            agent = obj.SACAgent;
+            agent = obj.agent;
         end
         
         % --- 학습 통계 반환 ---
@@ -250,10 +293,10 @@ classdef SACTrainingManager < handle
             stats = obj.TrainingStats;
         end
 
-        % --- 학습된 에이전트로 시뮬레이션 실행 (테스트용) ---
+        %% --- 학습된 에이전트로 시뮬레이션 실행 (테스트용) ---
         function simData = simulateTrainedAgent(obj, numEpisodes, agentToSimulate)
             if nargin < 3
-                agentToSimulate = obj.SACAgent;
+                agentToSimulate = obj.agent;
             end
             if isempty(agentToSimulate)
                 error('시뮬레이션할 에이전트가 없습니다. 먼저 학습을 진행하거나 에이전트를 로드하세요.');
@@ -269,5 +312,57 @@ classdef SACTrainingManager < handle
             simData = experience; % experience는 SimulationOutput 객체 또는 배열
             disp('--- 시뮬레이션 완료 ---');
         end
+        
+        % --- 학습된 에이전트로 단일 에피소드를 실행하고 경로 데이터를 반환 ---
+        function trajectory_data = runSingleEpisodeWithAgent(obj, agentToRun, enableVisualizationDuringRun)
+            
+            
+            if nargin < 3
+                enableVisualizationDuringRun = false; % 기본적으로 시각화 끔
+            end
+            
+            disp('단일 에피소드 평가 실행 시작...');
+            
+            % 평가 실행을 위해 환경의 시각화 설정 임시 변경
+            originalVisSetting = obj.RLEnvironment.DroneSim.EnableVisualization;
+            obj.RLEnvironment.DroneSim.EnableVisualization = enableVisualizationDuringRun;
+            
+            % 비디오 녹화가 켜져 있었다면 평가 중에는 끄도록 처리 (선택적)
+            originalVideoSetting = obj.RLEnvironment.DroneSim.EnableVideoRecording;
+            obj.RLEnvironment.DroneSim.EnableVideoRecording = false; 
+    
+    
+            obs = reset(obj.RLEnvironment); % 환경 리셋 (DroneSim 로그도 리셋됨)
+            
+            isDone = false;
+            currentStepInEpisode = 0;
+            
+            while ~isDone && currentStepInEpisode < obj.RLHyperParams.maxStepsPerEpisode
+                action = getAction(agentToRun, {obs}); % 에이전트로부터 행동 얻기
+                action = action{1}; % cell에서 추출
+                
+                [nextObs, ~, isDone, ~] = step(obj.RLEnvironment, action); % 환경 스텝 진행
+                obs = nextObs;
+                currentStepInEpisode = currentStepInEpisode + 1;
+                
+                if enableVisualizationDuringRun
+                    drawnow limitrate; % 시각화 업데이트
+                end
+            end
+            
+            % DroneSimulator 내부의 로그에서 경로 데이터 가져오기
+            simResults = obj.RLEnvironment.DroneSim.getResults();
+            trajectory_data.Time = simResults.Time;
+            trajectory_data.PositionNED = simResults.Position; % [N, E, D]
+            trajectory_data.EulerAngles = simResults.EulerAngles; % [R, P, Y]
+            trajectory_data.Vel = simResults.Velocity; %[vx, vy, vz]
+            
+            % 원래 시각화 설정 복원
+            obj.RLEnvironment.DroneSim.EnableVisualization = originalVisSetting;
+            obj.RLEnvironment.DroneSim.EnableVideoRecording = originalVideoSetting;
+    
+            disp('단일 에피소드 평가 실행 완료.');
+        end
+
     end
 end
