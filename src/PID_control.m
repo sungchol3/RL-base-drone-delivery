@@ -120,7 +120,14 @@ end
 if isnan(flightTime)
     flightTime = t(kLast);
 end
-fprintf('Time to reach target: %.2f s\n', flightTime);
+fprintf('Time to reach target: %.2f s\n\n', flightTime);
+
+m_drone = 31;
+idx_touch = find(pos(3,:) > 0, 1, 'last');
+v_touch = vel(:, idx_touch);
+p_touch = m_drone * v_touch;
+fprintf('Final Momentum just before landing \n');
+fprintf('Px = %7.2f   Py = %7.2f   Pz = %7.2f (kg*m/s)\n', p_touch(1), p_touch(2), p_touch(3));
 
 % Plot
 figure('Name', 'PID-Control Flight');
