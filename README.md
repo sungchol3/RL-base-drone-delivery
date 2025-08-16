@@ -23,9 +23,9 @@ Our mission is delivering a given load in given environment with drone delivery 
 - Size of drone: 1.5m $\times$ 1.5m $\times$ 1.5m[^ref-drone]
 - Weight of drone: about 30kg[^ref-drone]
 - Size of payload: 50cm $\times$ 50cm $\times$ 50cm
-- Weight of drone: 1kg
-- Start point: $x=-10$m, $y=0$m, $z=10$m
-- End point: $x=y=z=0$m
+- Weight of payload: 1kg
+- Start point: $x = -10$ m, $y = 0$ m, $z = 10$ m
+- End point: $x = y = z = 0$ m
 - No any obstacles
 - Same gravity with Earth ($9.8 \mathrm{m/s^2}$)
 
@@ -84,3 +84,7 @@ Performances(traveling time, impulse) of RL system are better than PID system, h
 
 # Notice
 This work is a team project carried out as part of the course **[AE300] Flight Mechanics Project** at [KAIST](https://wwww.kaist.ac.kr) in 2025.
+
+---
+
+[^ref-drone]: The size and weight of drone are refered from the Amazon's delivery drone model: MK27-2
